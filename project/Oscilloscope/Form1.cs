@@ -42,7 +42,7 @@ namespace Oscilloscope
 
         Byte desiredType = 4;
         float desiredAmplitude = 1.5f;
-        double desiredPeriod = 45.0f;
+        double desiredPeriod = 20.0f;
         float desiredFrequency = 0.1f;
         SByte desiredSign = 1;
 
@@ -351,18 +351,24 @@ namespace Oscilloscope
                 UInt16 adc0 = (UInt16)(packet[7] * 4096 + packet[6] * 256 + packet[5] * 16 + packet[4]);
                 UInt16 adc1 = (UInt16)(packet[3] * 4096 + packet[2] * 256 + packet[1] * 16 + packet[0]);
 
+                double voltage = -(((double)(adc0 - offset) / 65535) * 3.3) * 1.325421391778252936;
+                double current = -(((double)(adc1 - offset) / 65535) * 3.3) * 0.001338338929378022;
 
-                double voltage = -((double)(adc0 - offset) / 65535) * 3.3 * 1.669632881712438;
-                double current = -(((double)(adc1 - offset) / 65535) * 3.3 * 1.36818925714168 / 1006);
-
-                double resVoltage = voltage - 1494 * current;
+                double resVoltage = voltage - 1470 * current;
                 double res = resVoltage / current;
 
                 objWriter.Write(time.ToString());
 
-
+                if (!resistance)
+                {
                     time = (float)Math.Round(time + 0.01, 2);
-
+                    dcEnd = time;
+                }
+                else
+                {
+                    time = (float)Math.Round(time + 1.0, 2);
+                    current = current * 1.052735924580056;
+                }
 
                 objWriter.WriteLine("," + voltage.ToString() + "," + current.ToString());
 
@@ -377,7 +383,7 @@ namespace Oscilloscope
                     ScopeInit();
                 }
 
-                y = -(int)((resVoltage / 5.0) * 300) + 150;
+                y = -(int)((resVoltage / 4.0) * 300) + 150;
 
                 if (x != 0)
                 {
@@ -418,7 +424,7 @@ namespace Oscilloscope
                 
                 Byte cmdType = desiredType;
                 Byte cmdSign = ((desiredSign == -1) ? (Byte)0 : (Byte)15);
-                Byte cmdAmplitude = (Byte)((desiredAmplitude / 2.5f) * 255);
+                Byte cmdAmplitude = (Byte)((desiredAmplitude / 2.0f) * 255);
                 UInt32 cmdPeriod = (UInt32)((desiredPeriod / 100.0) * 4294967295.0);
 
                 button2.Enabled = false;
@@ -505,7 +511,7 @@ namespace Oscilloscope
             gfx.DrawLine(new Pen(Color.FromArgb(100, 100, 100)), new Point(0, 149), new Point(900, 149));
         //    gfx.DrawLine(new Pen(Color.FromArgb(100, 100, 100)), new Point(199, 0), new Point(199, 400));
 
-            int ty = -(int)((desiredAmplitude / 5.0) * 300) + 150;
+            int ty = -(int)((desiredAmplitude / 4.0) * 300) + 150;
             gfx.DrawLine(new Pen(Color.FromArgb(200, 200, 200)), new Point(0, ty), new Point(900, ty));
         }
 
@@ -518,7 +524,7 @@ namespace Oscilloscope
         {
             pictureBox1.Image = bmpScreen;
             if (resistance)
-                label1.Text = (time).ToString();
+                label1.Text = (time - dcEnd).ToString();
             else
                 label1.Text = (time).ToString();
         }
