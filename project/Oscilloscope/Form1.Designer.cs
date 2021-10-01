@@ -33,7 +33,7 @@
             this.serialPort1 = new System.IO.Ports.SerialPort(this.components);
             this.pictureBox1 = new System.Windows.Forms.PictureBox();
             this.groupBox1 = new System.Windows.Forms.GroupBox();
-            this.button2 = new System.Windows.Forms.Button();
+            this.btnScan = new System.Windows.Forms.Button();
             this.label8 = new System.Windows.Forms.Label();
             this.cmbPortName = new System.Windows.Forms.ComboBox();
             this.groupBox2 = new System.Windows.Forms.GroupBox();
@@ -49,7 +49,7 @@
             this.rdoSin = new System.Windows.Forms.RadioButton();
             this.lblFreq = new System.Windows.Forms.Label();
             this.lblAmp = new System.Windows.Forms.Label();
-            this.button1 = new System.Windows.Forms.Button();
+            this.btnStart = new System.Windows.Forms.Button();
             ((System.ComponentModel.ISupportInitialize)(this.pictureBox1)).BeginInit();
             this.groupBox1.SuspendLayout();
             this.groupBox2.SuspendLayout();
@@ -65,9 +65,7 @@
             // serialPort1
             // 
             this.serialPort1.BaudRate = 921600;
-            this.serialPort1.PortName = "COM12";
-            this.serialPort1.ReadBufferSize = 10000;
-            this.serialPort1.ReceivedBytesThreshold = 9000;
+            this.serialPort1.ReadBufferSize = 1000000;
             this.serialPort1.DataReceived += new System.IO.Ports.SerialDataReceivedEventHandler(this.serialPort1_DataReceived);
             // 
             // pictureBox1
@@ -82,7 +80,7 @@
             // 
             // groupBox1
             // 
-            this.groupBox1.Controls.Add(this.button2);
+            this.groupBox1.Controls.Add(this.btnScan);
             this.groupBox1.Controls.Add(this.label8);
             this.groupBox1.Controls.Add(this.cmbPortName);
             this.groupBox1.Location = new System.Drawing.Point(433, 12);
@@ -93,15 +91,15 @@
             this.groupBox1.TabStop = false;
             this.groupBox1.Text = "Serial Port";
             // 
-            // button2
+            // btnScan
             // 
-            this.button2.Location = new System.Drawing.Point(14, 33);
-            this.button2.Name = "button2";
-            this.button2.Size = new System.Drawing.Size(209, 23);
-            this.button2.TabIndex = 22;
-            this.button2.Text = "Scan Ports";
-            this.button2.UseVisualStyleBackColor = true;
-            this.button2.Click += new System.EventHandler(this.button2_Click);
+            this.btnScan.Location = new System.Drawing.Point(14, 33);
+            this.btnScan.Name = "btnScan";
+            this.btnScan.Size = new System.Drawing.Size(209, 23);
+            this.btnScan.TabIndex = 22;
+            this.btnScan.Text = "Scan Ports";
+            this.btnScan.UseVisualStyleBackColor = true;
+            this.btnScan.Click += new System.EventHandler(this.btnScan_Click);
             // 
             // label8
             // 
@@ -138,7 +136,7 @@
             this.groupBox2.Controls.Add(this.rdoSin);
             this.groupBox2.Controls.Add(this.lblFreq);
             this.groupBox2.Controls.Add(this.lblAmp);
-            this.groupBox2.Controls.Add(this.button1);
+            this.groupBox2.Controls.Add(this.btnStart);
             this.groupBox2.Location = new System.Drawing.Point(433, 144);
             this.groupBox2.Name = "groupBox2";
             this.groupBox2.RightToLeft = System.Windows.Forms.RightToLeft.No;
@@ -307,21 +305,21 @@
             this.lblAmp.TabIndex = 9;
             this.lblAmp.Text = "Amplitude: 0.5 V";
             // 
-            // button1
+            // btnStart
             // 
-            this.button1.Location = new System.Drawing.Point(14, 229);
-            this.button1.Name = "button1";
-            this.button1.Size = new System.Drawing.Size(209, 23);
-            this.button1.TabIndex = 8;
-            this.button1.Text = "Start";
-            this.button1.UseVisualStyleBackColor = true;
-            this.button1.Click += new System.EventHandler(this.button1_Click);
+            this.btnStart.Location = new System.Drawing.Point(14, 229);
+            this.btnStart.Name = "btnStart";
+            this.btnStart.Size = new System.Drawing.Size(209, 23);
+            this.btnStart.TabIndex = 8;
+            this.btnStart.Text = "Start";
+            this.btnStart.UseVisualStyleBackColor = true;
+            this.btnStart.Click += new System.EventHandler(this.btnStart_Click);
             // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(684, 424);
+            this.ClientSize = new System.Drawing.Size(684, 423);
             this.Controls.Add(this.groupBox2);
             this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.pictureBox1);
@@ -349,10 +347,10 @@
         private System.Windows.Forms.GroupBox groupBox1;
         private System.Windows.Forms.Label label8;
         private System.Windows.Forms.ComboBox cmbPortName;
-        private System.Windows.Forms.Button button2;
+        private System.Windows.Forms.Button btnScan;
         private System.Windows.Forms.GroupBox groupBox2;
         private System.Windows.Forms.Label lblAmp;
-        private System.Windows.Forms.Button button1;
+        private System.Windows.Forms.Button btnStart;
         private System.Windows.Forms.Label label4;
         private System.Windows.Forms.RadioButton rdoTri;
         private System.Windows.Forms.RadioButton rdoSin;

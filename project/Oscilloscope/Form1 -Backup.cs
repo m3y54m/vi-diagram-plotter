@@ -28,6 +28,7 @@ namespace Oscilloscope
         private UInt16[] voltageArray;
         private bool buttonStart = false;
         private bool operationDone = false;
+        private uint count = 0;
         private int periodCount = 0;
         private int offset = 32767;
 
@@ -57,9 +58,6 @@ namespace Oscilloscope
         byte data;
         byte[] receivedPacket = new byte[8];
         private bool packetProcessing = false;
-        private byte packetIndex = 0;
-        private UInt32 count = 0;
-        private UInt32 totalSamples = 0;
 
         Boolean scanSerialPorts()
         {
@@ -86,58 +84,6 @@ namespace Oscilloscope
             gfx = Graphics.FromImage(bmpScreen);
             ScopeInit();
             pictureBox1.Image = bmpScreen;
-        }
-
-        void StartStop()
-        {
-            if (!buttonStart)
-            {
-                gfx.Clear(pictureBox1.BackColor);
-                ScopeInit();
-                pictureBox1.Image = bmpScreen;
-                buttonStart = true;
-                btnStart.Text = "Stop";
-                serialPort1.PortName = cmbPortName.Text;
-                serialPort1.ReadBufferSize = 1000000;
-
-                cmbPortName.Enabled = false;
-                btnScan.Enabled = false;
-                if (!Directory.Exists("OUTPUT"))
-                {
-                    Directory.CreateDirectory("OUTPUT");
-                }
-
-                overCurrent = false;
-                timer1.Enabled = true;
-
-            }
-            else
-            {
-                buttonStart = false;
-                if (threadStarted)
-                {
-                    processThread.Abort();
-                    threadStarted = false;
-                }
-                operationDone = false;
-                count = 0;
-                periodCount = 0;
-                btnStart.Text = "Start";
-                cmbPortName.Enabled = true;
-                btnScan.Enabled = true;
-                timer1.Enabled = false;
-                if (serialPort1.IsOpen)
-                {
-                    // Stop singnal genarating
-                    serialPort1.Write("P");
-                    serialPort1.Close();
-                }
-            }
-        }
-
-        private void btnStart_Click(object sender, EventArgs e)
-        {
-            StartStop();
         }
 
         byte getHexValue(byte chr)
@@ -237,79 +183,77 @@ namespace Oscilloscope
 
                 lock (qBuffer)
                 {
-                    while (qBuffer.Count() > 0)  // process each single byte
+                    while (qBuffer.Count() >= 9)
                     {
                         data = qBuffer.Dequeue();
 
-                        if (!packetProcessing)
+                        if (data == Convert.ToByte('S'))
                         {
-                            if (data == Convert.ToByte('S'))
+                            byte[] receivedPacket = new byte[8];
+
+                            for (int i = 0; i < 8; i++)
                             {
-                                packetProcessing = true;
-                                packetIndex = 0;
+                                receivedPacket[i] = qBuffer.Dequeue();
                             }
-                            else if (data == Convert.ToByte('P')) // P indicates that one period ended
+
+                            #region Convert packet to numbers
+
+                            UInt16[] voltageHexDigit = new UInt16[4];
+                            UInt16[] currentHexDigit = new UInt16[4];
+
+                            UInt16 adc0 = 17;
+                            UInt16 adc1 = 17;
+
+                            voltageHexDigit[3] = getHexValue(receivedPacket[0]);
+                            voltageHexDigit[2] = getHexValue(receivedPacket[1]);
+                            voltageHexDigit[1] = getHexValue(receivedPacket[2]);
+                            voltageHexDigit[0] = getHexValue(receivedPacket[3]);
+
+                            currentHexDigit[3] = getHexValue(receivedPacket[4]);
+                            currentHexDigit[2] = getHexValue(receivedPacket[5]);
+                            currentHexDigit[1] = getHexValue(receivedPacket[6]);
+                            currentHexDigit[0] = getHexValue(receivedPacket[7]);
+
+                            if (voltageHexDigit[3] == 16 || voltageHexDigit[2] == 16 || voltageHexDigit[1] == 16 || voltageHexDigit[0] == 16 || currentHexDigit[3] == 16 || currentHexDigit[2] == 16 || currentHexDigit[1] == 16 || currentHexDigit[0] == 16)
                             {
-                                totalSamples = count;
-                                count = 0;
-                                operationDone = true;
+                                // ERROR
+                                adc0 = 13;
+                                adc1 = 13;
                             }
-                            else if (data == Convert.ToByte('W')) // W indicates error condition
+                            else
                             {
-                                // Over-Current or Over-Voltage
-                                totalSamples = count;
-                                this.BeginInvoke(new EventHandler(test1));
-                                count = 0;
-                                overCurrent = true;
-                                operationDone = true;
+                                adc0 = (UInt16)(voltageHexDigit[3] * 4096 + voltageHexDigit[2] * 256 + voltageHexDigit[1] * 16 + voltageHexDigit[0]);
+                                adc1 = (UInt16)(currentHexDigit[3] * 4096 + currentHexDigit[2] * 256 + currentHexDigit[1] * 16 + currentHexDigit[0]);
                             }
+
+                            voltageArray[count] = adc0;
+                            currentArray[count] = adc1;
+
+                            count++;
+
+                            //if (count == sampleCount)
+                            //{
+                            //    count = 0;
+                            //    operationDone = true;
+                            //    this.BeginInvoke(new EventHandler(test1));
+                            //}
+
+                            #endregion
+
                         }
-                        else if (packetProcessing)
+                        else if (data == Convert.ToByte('P'))
                         {
-                            receivedPacket[packetIndex] = data;
-
-                            packetIndex++;
-
-                            if (packetIndex == 8)
-                            {
-                                packetProcessing = false;
-
-                                #region Convert packet to numbers
-
-                                UInt16[] voltageHexDigit = new UInt16[4];
-                                UInt16[] currentHexDigit = new UInt16[4];
-
-                                UInt16 adc0 = 0;
-                                UInt16 adc1 = 0;
-
-                                voltageHexDigit[3] = getHexValue(receivedPacket[0]);
-                                voltageHexDigit[2] = getHexValue(receivedPacket[1]);
-                                voltageHexDigit[1] = getHexValue(receivedPacket[2]);
-                                voltageHexDigit[0] = getHexValue(receivedPacket[3]);
-
-                                currentHexDigit[3] = getHexValue(receivedPacket[4]);
-                                currentHexDigit[2] = getHexValue(receivedPacket[5]);
-                                currentHexDigit[1] = getHexValue(receivedPacket[6]);
-                                currentHexDigit[0] = getHexValue(receivedPacket[7]);
-
-                                if (voltageHexDigit[3] == 16 || voltageHexDigit[2] == 16 || voltageHexDigit[1] == 16 || voltageHexDigit[0] == 16 || currentHexDigit[3] == 16 || currentHexDigit[2] == 16 || currentHexDigit[1] == 16 || currentHexDigit[0] == 16)
-                                {
-                                    // ERROR
-                                }
-                                else
-                                {
-                                    adc0 = (UInt16)(voltageHexDigit[3] * 4096 + voltageHexDigit[2] * 256 + voltageHexDigit[1] * 16 + voltageHexDigit[0]);
-                                    adc1 = (UInt16)(currentHexDigit[3] * 4096 + currentHexDigit[2] * 256 + currentHexDigit[1] * 16 + currentHexDigit[0]);
-                                }
-
-                                voltageArray[count] = adc0;
-                                currentArray[count] = adc1;
-
-                                count++;
-
-                                #endregion
-
-                            }
+                            sampleCount = count;
+                            operationDone = true;
+                            this.BeginInvoke(new EventHandler(test2));
+                        }
+                        else if (data == Convert.ToByte('W'))
+                        {
+                            // Over-Current or Over-Voltage
+                            overCurrent = true;
+                            sampleCount = count;
+                            operationDone = true;
+                            this.BeginInvoke(new EventHandler(test2));
                         }
                     }
                 }
@@ -317,61 +261,104 @@ namespace Oscilloscope
         }
         private void test1(object sender, EventArgs e)
         {
-            label8.Text = totalSamples.ToString();
+            label8.Text = "Hello";
         }
+        private void test2(object sender, EventArgs e)
+        {
+            label8.Text = "Pello";
+        }
+        private void btnStart_Click(object sender, EventArgs e)
+        {
+            if (!buttonStart)
+            {
+                gfx.Clear(pictureBox1.BackColor);
+                ScopeInit();
+                pictureBox1.Image = bmpScreen;
+                buttonStart = true;
+                btnStart.Text = "Stop";
+                serialPort1.PortName = cmbPortName.Text;
+                serialPort1.ReadBufferSize = 1000000;
+
+                cmbPortName.Enabled = false;
+                btnScan.Enabled = false;
+                if (!Directory.Exists("OUTPUT"))
+                {
+                    Directory.CreateDirectory("OUTPUT");
+                }
+
+                timer1.Enabled = true;
+            }
+            else
+            {
+                buttonStart = false;
+                if (threadStarted)
+                {
+                    processThread.Abort();
+                    threadStarted = false;
+                }
+                operationDone = false;
+                count = 0;
+                periodCount = 0;
+                btnStart.Text = "Start";
+                cmbPortName.Enabled = true;
+                btnScan.Enabled = true;
+                timer1.Enabled = false;
+                if (serialPort1.IsOpen)
+                {
+                    // Stop singnal genarating
+                    serialPort1.Write("P");
+                    serialPort1.Close();
+                }
+            }
+        }
+
         private void timer1_Tick(object sender, EventArgs e)
         {
             if (!operationDone)
             {
                 if (!threadStarted)
                 {
-                    if (!overCurrent)
+                    processThread = new Thread(processData);
+                    processThread.IsBackground = true;
+                    processThread.Start();
+                    threadStarted = true;
+
+                    if (!serialPort1.IsOpen)
+                        serialPort1.Open();
+
+                    if (chkApply.Checked)
                     {
-                        processThread = new Thread(processData);
-                        processThread.IsBackground = true;
-                        processThread.Start();
-                        threadStarted = true;
+                        Byte cmdType = desiredType;
+                        Byte cmdAmplitude = (Byte)((desiredAmplitude / 8.0f) * 255);
+                        //UInt16 cmdRate = desiredRate;
+                        UInt16 cmdRate = ((desiredSign == -1) ? (UInt16)0 : (UInt16)1);
+                        UInt16 cmdPeriod = (UInt16)((desiredPeriod / 100.0f) * 65535.0f);
 
-                        if (!serialPort1.IsOpen)
-                            serialPort1.Open();
-
-                        if (chkApply.Checked)
-                        {
-                            Byte cmdType = desiredType;
-                            Byte cmdAmplitude = (Byte)((desiredAmplitude / 8.0f) * 255);
-                            //UInt16 cmdRate = desiredRate;
-                            UInt16 cmdRate = ((desiredSign == -1) ? (UInt16)0 : (UInt16)1);
-                            UInt16 cmdPeriod = (UInt16)((desiredPeriod / 100.0f) * 65535.0f);
-
-                            tempType = desiredType;
-                            tempAmplitude = desiredAmplitude;
-                            tempPeriod = desiredPeriod;
-                            tempFrequency = desiredFrequency;
-                            tempRate = desiredRate;
-                            tempSign = desiredSign;
+                        tempType = desiredType;
+                        tempAmplitude = desiredAmplitude;
+                        tempPeriod = desiredPeriod;
+                        tempFrequency = desiredFrequency;
+                        tempRate = desiredRate;
+                        tempSign = desiredSign;
 
 
-                            //UInt16 golbalRate = cmdRate;
-                            UInt16 golbalRate = desiredRate;
-                            float globalPeriod = (float)(cmdPeriod) / 655.0f;
+                        //UInt16 golbalRate = cmdRate;
+                        UInt16 golbalRate = desiredRate;
+                        float globalPeriod = (float)(cmdPeriod) / 655.0f;
 
-                            sampleCount = (UInt32)(golbalRate * globalPeriod);
-                            //label4.Text = sampleCount.ToString();
-                            //label8.Text = globalPeriod.ToString();
-                            currentArray = new UInt16[2 * sampleCount];
-                            voltageArray = new UInt16[2 * sampleCount];
+                        sampleCount = (UInt32)(golbalRate * globalPeriod);
+                        //label4.Text = sampleCount.ToString();
+                        //label8.Text = globalPeriod.ToString();
+                        currentArray = new UInt16[sampleCount];
+                        voltageArray = new UInt16[sampleCount];
 
-                            // Send signal properties
-                            serialPort1.Write("Q" + cmdType.ToString("X1") + cmdAmplitude.ToString("X2") + cmdRate.ToString("X4") + cmdPeriod.ToString("X4"));
-                        }
-
-                        // Start singnal genarating
-                        serialPort1.Write("G");
+                        // Send signal properties
+                        serialPort1.Write("Q" + cmdType.ToString("X1") + cmdAmplitude.ToString("X2") + cmdRate.ToString("X4") + cmdPeriod.ToString("X4"));
                     }
-                    else
-                    {
-                        StartStop();
-                    }
+
+                    // Start singnal genarating
+                    serialPort1.Write("G");
+
                 }
             }
             else
@@ -416,6 +403,12 @@ namespace Oscilloscope
                         break;
                 }
 
+                if (overCurrent)
+                {
+                    overCurrent = false;
+                    gfx.DrawString("Over-Current", new Font("Tahoma", 10, FontStyle.Bold), new SolidBrush(Color.Red), new Point(10, 100));
+                }
+
                 gfx.DrawString("Period Number: " + periodCount.ToString(), new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 10));
                 gfx.DrawString("Signal Type: " + tempStr, new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 30));
                 gfx.DrawString("Amplitude: " + tempAmplitude.ToString() + " V", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 50));
@@ -425,12 +418,7 @@ namespace Oscilloscope
                 gfx.DrawString(pc.GetYear(thisDate).ToString("D4") + "/" + pc.GetMonth(thisDate).ToString("D2") + "/" + pc.GetDayOfMonth(thisDate).ToString("D2") + " " + pc.GetHour(thisDate).ToString("D2") + ":" + pc.GetMinute(thisDate).ToString("D2") + ":" + pc.GetSecond(thisDate).ToString("D2"),
                                 new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(270, 370));
 
-                if (overCurrent)
-                {
-                    gfx.DrawString("Over-Current", new Font("Tahoma", 10, FontStyle.Bold), new SolidBrush(Color.Red), new Point(10, 100));
-                }
-
-                for (int i = 0; i < totalSamples; i++)
+                for (int i = 0; i < sampleCount; i++)
                 {
                     UInt16 adcVoltage = voltageArray[i];
                     UInt16 adcCurrent = currentArray[i];
@@ -438,8 +426,8 @@ namespace Oscilloscope
                     double voltage = -(((double)(adcVoltage - offset) / 65535) * 3.3) * 4 * 1.325421391778252936 - 0.003021378303794;
                     double current = -(((double)(adcCurrent - offset) / 65535) * 3.3) * 4 * 0.001338338929378022 + 6.051442370329619e-07;
 
-                    objWriter.WriteLine(voltage.ToString() + "," + current.ToString());
-                    //objWriter.WriteLine(adcVoltage.ToString() + "," + adcCurrent.ToString());
+                    //objWriter.WriteLine(voltage.ToString() + "," + current.ToString());
+                    objWriter.WriteLine(adcVoltage.ToString() + "," + adcCurrent.ToString());
 
                     x = -(int)(((double)(voltageArray[i] - offset) / 65535) * 420) + 199;
                     y = (int)(((double)(currentArray[i] - offset) / 65535) * 420) + 199;
