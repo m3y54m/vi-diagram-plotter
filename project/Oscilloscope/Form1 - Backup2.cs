@@ -21,29 +21,20 @@ namespace Oscilloscope
         System.IO.StreamWriter objWriter;
         static int ScreenWidth = 400;
         static int ScreenHeight = 400;
-        Bitmap bmpScreen = new Bitmap(399, 399);
+        Bitmap bmpScreen = new Bitmap(400, 400);
         Graphics gfx;
+        static UInt32 sampleCount = 1000;
+        UInt16[] currentArray;
+        UInt16[] voltageArray;
         bool buttonStart = false;
         bool operationDone = false;
         int periodCount = 0;
-        int testCount = 0;
-        int adcCurrentOffset = 2047;
-        int adcVoltageOffset = 2047;
-        int dacOffset = 512;
-        float VREF = 2.495f;
-
-        double currentCorrectionFactor = 1.022328;
-        double voltageCorrectionFactor = 1;
-
-        float maxAmplitude = 2.5f;
-        //float maxAmplitude = 10.0f;
-
-        float outputVoltageCorrectionFactor = 1.0075567f;
+        int offset = 32767;
 
         Byte desiredType = 0;
-        float desiredAmplitude = 1.0f;
-        float desiredPeriod = 1.0f;
-        UInt32 desiredFrequency = 100;
+        float desiredAmplitude = 0.5f;
+        float desiredPeriod = 10.0f;
+        UInt32 desiredFrequency = 1000;
         UInt16 desiredRate = 1000;
         SByte desiredSign = 1;
         bool IsHighFreq = false;
@@ -69,18 +60,11 @@ namespace Oscilloscope
         byte[] receivedPacket = new byte[8];
         bool packetProcessing = false;
         byte packetIndex = 0;
+        UInt32 count = 0;
+        UInt32 totalSamples = 0;
 
         Point VI;
         Queue<Point> VI_Buffer = new Queue<Point>(); // voltage and current adc values buffer. x -> V , y -> I
-        UInt32 pointIndex = 0;
-
-        UInt16 adcVoltage;
-        UInt16 adcCurrent;
-
-        double voltage;
-        double current;
-
-        double resistance;
 
         Boolean scanSerialPorts()
         {
@@ -103,67 +87,20 @@ namespace Oscilloscope
         public Form1()
         {
             InitializeComponent();
-
             scanSerialPorts();
-
             gfx = Graphics.FromImage(bmpScreen);
             ScopeInit();
             pictureBox1.Image = bmpScreen;
-        }
-
-        void sendCommand()
-        {
-            float tempFloat;
-
-            Byte cmdType = desiredType;
-            UInt32 cmdAmplitude;
-            UInt32 cmdPeriod;
-            UInt32 cmdFrequency;
-            UInt16 cmdRate;
-            Byte cmdConfig;
-
-            unsafe
-            {
-                cmdType = desiredType;
-
-                tempFloat = (desiredAmplitude / maxAmplitude) * outputVoltageCorrectionFactor;
-                if (tempFloat > 1.0f) tempFloat = 1.0f;
-                if (tempFloat < 0) tempFloat = 0;
-                cmdAmplitude = *((UInt32*)(&tempFloat));
-
-                tempFloat = desiredPeriod;
-                cmdPeriod = *((UInt32*)(&tempFloat));
-
-                cmdFrequency = desiredFrequency;
-
-                cmdRate = desiredRate;
-
-                cmdConfig = 0;
-                if (desiredSign == 1) cmdConfig |= 0x80;
-                if (IsHighFreq) cmdConfig |= 0x40;
-            }
-
-            tempType = desiredType;
-            tempAmplitude = desiredAmplitude;
-            tempPeriod = desiredPeriod;
-            tempFrequency = desiredFrequency;
-            tempRate = desiredRate;
-            tempSign = desiredSign;
-            tempIsHighFreq = IsHighFreq;
-
-            // Send signal properties
-            mySerialPort.Write("Q" + cmdType.ToString("X2") + cmdAmplitude.ToString("X8") + cmdPeriod.ToString("X8") + cmdFrequency.ToString("X8") + cmdRate.ToString("X4") + cmdConfig.ToString("X2"));
-
-            // Start singnal genarating
-            mySerialPort.Write("G");
         }
 
         void StartStop()
         {
             if (!buttonStart)
             {
+                gfx.Clear(pictureBox1.BackColor);
+                ScopeInit();
+                pictureBox1.Image = bmpScreen;
                 buttonStart = true;
-
                 btnStart.Text = "Stop";
 
                 if (!Directory.Exists("OUTPUT"))
@@ -172,88 +109,8 @@ namespace Oscilloscope
                 }
 
                 overCurrent = false;
+                timer1.Enabled = true;
 
-                if (IsHighFreq)
-                {
-                    testCount++;
-
-                    int name = 0;
-
-                    while (File.Exists("OUTPUT\\PERIODIC_" + testCount.ToString() + "_" + name.ToString() + ".txt"))
-                    {
-                        name++;
-                    }
-
-                    objWriter = new StreamWriter("OUTPUT\\PERIODIC_" + testCount.ToString() + "_" + name.ToString() + ".txt");
-                    objWriter.WriteLine("V,I");
-
-                    gfx.Clear(pictureBox1.BackColor);
-                    //ScopeInit();
-                    pictureBox1.Image = bmpScreen;
-
-                    gfx.DrawString("Test Number: " + testCount.ToString(), new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 10));
-                    gfx.DrawString("Signal Type: Positive Pulse", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 30));
-                    gfx.DrawString("Amplitude: " + desiredAmplitude.ToString() + " V", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 50));
-                    gfx.DrawString("Frequency: " + desiredFrequency.ToString() + " Hz", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 70));
-
-                    thisDate = DateTime.Now;
-                    gfx.DrawString(pc.GetYear(thisDate).ToString("D4") + "/" + pc.GetMonth(thisDate).ToString("D2") + "/" + pc.GetDayOfMonth(thisDate).ToString("D2") + " " + pc.GetHour(thisDate).ToString("D2") + ":" + pc.GetMinute(thisDate).ToString("D2") + ":" + pc.GetSecond(thisDate).ToString("D2"),
-                                    new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(270, 370));
-                }
-                else
-                {
-                    periodCount++;
-
-                    int name = 0;
-
-                    while (File.Exists("OUTPUT\\SINGLE_PERIOD_" + periodCount.ToString() + "_" + name.ToString() + ".txt"))
-                    {
-                        name++;
-                    }
-
-                    objWriter = new StreamWriter("OUTPUT\\SINGLE_PERIOD_" + periodCount.ToString() + "_" + name.ToString() + ".txt");
-                    objWriter.WriteLine("V,I");
-
-                    gfx.Clear(pictureBox1.BackColor);
-                    ScopeInit();
-                    pictureBox1.Image = bmpScreen;
-
-                    string tempStr = "";
-
-                    switch (desiredType)
-                    {
-                        case 0:
-                            tempStr = "Sine";
-                            break;
-                        case 1:
-                            tempStr = "Triangle";
-                            break;
-                        case 2:
-                            tempStr = "| Sine |";
-                            break;
-                        case 3:
-                            tempStr = "| Triangle |";
-                            break;
-                        case 4:
-                            tempStr = "DC";
-                            break;
-                    }
-
-                    gfx.DrawString("Period Number: " + periodCount.ToString(), new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 10));
-                    gfx.DrawString("Signal Type: " + tempStr, new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 30));
-                    gfx.DrawString("Amplitude: " + desiredAmplitude.ToString() + " V", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 50));
-                    gfx.DrawString("Period: " + desiredPeriod.ToString() + " s", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 70));
-
-                    thisDate = DateTime.Now;
-                    gfx.DrawString(pc.GetYear(thisDate).ToString("D4") + "/" + pc.GetMonth(thisDate).ToString("D2") + "/" + pc.GetDayOfMonth(thisDate).ToString("D2") + " " + pc.GetHour(thisDate).ToString("D2") + ":" + pc.GetMinute(thisDate).ToString("D2") + ":" + pc.GetSecond(thisDate).ToString("D2"),
-                                    new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(270, 370));
-                }
-
-                pointIndex = 0;
-
-                startThread();
-
-                sendCommand(); // send signal properties to the device
             }
             else
             {
@@ -262,33 +119,14 @@ namespace Oscilloscope
                 stopThread();
 
                 operationDone = false;
-
-                if (tempIsHighFreq)
-                {
-
-                    if (overCurrent)
-                    {
-                        overCurrent = false;
-                        gfx.DrawString("Over-Current", new Font("Tahoma", 10, FontStyle.Bold), new SolidBrush(Color.Red), new Point(10, 100));
-                    }
-
-                    pictureBox1.Image = bmpScreen;
-
-                    int name2 = 0;
-
-                    while (File.Exists("OUTPUT\\PERIODIC_" + testCount.ToString() + "_" + name2.ToString() + ".gif"))
-                    {
-                        name2++;
-                    }
-
-                    bmpScreen.Save("OUTPUT\\PERIODIC_" + testCount.ToString() + "_" + name2.ToString() + ".gif", System.Drawing.Imaging.ImageFormat.Gif);
-
-                    objWriter.Close();
-
-                    pointIndex = 0;
-                }
-
+                count = 0;
+                periodCount = 0;
                 btnStart.Text = "Start";
+
+                timer1.Enabled = false;
+
+                if (!mySerialPort.IsOpen)
+                    mySerialPort.Open();
 
                 mySerialPort.Write("P"); // Stop singnal genarating
 
@@ -410,15 +248,17 @@ namespace Oscilloscope
                             }
                             else if (data == Convert.ToByte('P')) // P indicates that one period has ended
                             {
+                                totalSamples = count;
+                                count = 0;
                                 operationDone = true;
-                                this.BeginInvoke(new EventHandler(putPoint));
                             }
                             else if (data == Convert.ToByte('W')) // W indicates error condition
                             {
                                 // Over-Current or Over-Voltage
+                                totalSamples = count;
+                                count = 0;
                                 overCurrent = true;
                                 operationDone = true;
-                                this.BeginInvoke(new EventHandler(putPoint));
                             }
                         }
                         else if (packetProcessing)
@@ -457,11 +297,7 @@ namespace Oscilloscope
                                     adc1 = (UInt16)(currentHexDigit[3] * 4096 + currentHexDigit[2] * 256 + currentHexDigit[1] * 16 + currentHexDigit[0]);
                                 }
 
-                                lock (VI_Buffer)
-                                {
-                                    VI_Buffer.Enqueue(new Point(adc0, adc1));
-                                    this.BeginInvoke(new EventHandler(putPoint));
-                                }
+                                VI_Buffer.Enqueue(new Point(adc0, adc1));
                             }
                         }
                     }
@@ -469,132 +305,168 @@ namespace Oscilloscope
             }
         }
 
-        private void putPoint(object sender, EventArgs e)
+        private void timer1_Tick(object sender, EventArgs e)
         {
-            if (threadStarted)
+            float tempFloat;
+
+            if (!operationDone)
             {
-                if (tempIsHighFreq)
+                if (!threadStarted)
                 {
-                    lock (VI_Buffer)
+                    if (!overCurrent)
                     {
-                        while (VI_Buffer.Count > 0)
+                        startThread();
+
+                        if (chkApply.Checked)
                         {
-                            VI = VI_Buffer.Dequeue();
+                            Byte cmdType = desiredType;
+                            UInt32 cmdAmplitude;
+                            UInt32 cmdPeriod;
+                            UInt32 cmdFrequency;
+                            UInt16 cmdRate;
+                            Byte cmdConfig;
 
-                            adcVoltage = (UInt16)(VI.X);
-                            adcCurrent = (UInt16)(VI.Y);
-
-                            voltage = ConvertADCtoVoltage(adcVoltage);
-                            current = ConvertADCtoCurrent(adcCurrent);
-
-                            if (current != 0)
+                            unsafe
                             {
-                                resistance = voltage / current;
-                                objWriter.WriteLine(voltage.ToString() + "," + current.ToString() + "," + resistance.ToString());
-                            }
-                            else
-                            {
-                                objWriter.WriteLine(voltage.ToString() + "," + current.ToString() + ", NaN");
-                            }
+                                cmdType = desiredType;
 
-                            gfx.FillRectangle(new SolidBrush(Color.White), 0, 170, 398, 80);
+                                tempFloat = desiredAmplitude / 8.0f;
+                                cmdAmplitude = *((UInt32*)(&tempFloat));
 
-                            string strResistance = "NaN";
-                            int intResistance = (int)resistance;
+                                tempFloat = desiredPeriod;
+                                cmdPeriod = *((UInt32*)(&tempFloat));
 
+                                cmdFrequency = desiredFrequency;
 
-                            strResistance = intResistance.ToString("N0") + " Ω";
+                                cmdRate = desiredRate;
 
-
-                            gfx.DrawString("R = " + strResistance, new Font("Tahoma", 20, FontStyle.Bold), new SolidBrush(Color.Green), new Point(120, 200));
-                            //resistance.ToString("G4")
-                            pointIndex++;
-                        }
-                    }
-
-                    pictureBox1.Image = bmpScreen;
-
-                    if (operationDone)
-                    {
-                        StartStop();
-                    }
-                }
-                else
-                {
-                    lock (VI_Buffer)
-                    {
-                        while (VI_Buffer.Count > 0)
-                        {
-                            VI = VI_Buffer.Dequeue();
-
-                            adcVoltage = (UInt16)(VI.X);
-                            adcCurrent = (UInt16)(VI.Y);
-
-                            voltage = ConvertADCtoVoltage(adcVoltage);
-                            current = ConvertADCtoCurrent(adcCurrent);
-
-                            objWriter.WriteLine(voltage.ToString() + "," + current.ToString());
-
-                            x = -(int)(((double)(adcVoltage - adcVoltageOffset) / 4096) * 390) + 199;
-                            y = -(int)(((double)(adcCurrent - adcCurrentOffset) / 4096) * 390) + 199;
-
-                            if (pointIndex != 0)
-                            {
-                                gfx.DrawLine(pen, new Point(tempx, tempy), new Point(x, y));
+                                cmdConfig = 0;
+                                if (desiredSign == 1) cmdConfig |= 0x80;
+                                if (IsHighFreq) cmdConfig |= 0x40;
                             }
 
-                            tempx = x;
-                            tempy = y;
+                            tempType = desiredType;
+                            tempAmplitude = desiredAmplitude;
+                            tempPeriod = desiredPeriod;
+                            tempFrequency = desiredFrequency;
+                            tempRate = desiredRate;
+                            tempSign = desiredSign;
+                            tempIsHighFreq = IsHighFreq;
 
-                            pointIndex++;
+                            // Send signal properties
+                            mySerialPort.Write("Q" + cmdType.ToString("X2") + cmdAmplitude.ToString("X8") + cmdPeriod.ToString("X8") + cmdFrequency.ToString("X8") + cmdRate.ToString("X4") + cmdConfig.ToString("X2"));
                         }
+
+                        // Start singnal genarating
+                        mySerialPort.Write("G");
                     }
-
-                    pictureBox1.Image = bmpScreen;
-
-                    if (operationDone)
+                    else
                     {
-                        stopThread();
-
-                        operationDone = false;
-
-                        if (overCurrent)
-                        {
-                            overCurrent = false;
-                            gfx.DrawString("Over-Current", new Font("Tahoma", 10, FontStyle.Bold), new SolidBrush(Color.Red), new Point(10, 100));
-                        }
-
-                        pictureBox1.Image = bmpScreen;
-
-                        int name2 = 0;
-
-                        while (File.Exists("OUTPUT\\SINGLE_PERIOD_" + periodCount.ToString() + "_" + name2.ToString() + ".gif"))
-                        {
-                            name2++;
-                        }
-
-                        bmpScreen.Save("OUTPUT\\SINGLE_PERIOD_" + periodCount.ToString() + "_" + name2.ToString() + ".gif", System.Drawing.Imaging.ImageFormat.Gif);
-
-                        objWriter.Close();
-
-                        pointIndex = 0;
-
                         StartStop();
                     }
                 }
             }
+            else
+            {
+                stopThread();
+
+                operationDone = false;
+
+                periodCount++;
+
+                int name = 0;
+
+                while (File.Exists("OUTPUT\\PERIOD_" + periodCount.ToString() + "_" + name.ToString() + ".txt"))
+                {
+                    name++;
+                }
+
+                objWriter = new StreamWriter("OUTPUT\\PERIOD_" + periodCount.ToString() + "_" + name.ToString() + ".txt");
+                objWriter.WriteLine("V,I");
+
+                gfx.Clear(pictureBox1.BackColor);
+                ScopeInit();
+
+                string tempStr = "";
+
+                switch (tempType)
+                {
+                    case 0:
+                        tempStr = "Sine";
+                        break;
+                    case 1:
+                        tempStr = "Triangle";
+                        break;
+                    case 2:
+                        tempStr = "| Sine |";
+                        break;
+                    case 3:
+                        tempStr = "| Triangle |";
+                        break;
+                    case 4:
+                        tempStr = "DC";
+                        break;
+                }
+
+                gfx.DrawString("Period Number: " + periodCount.ToString(), new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 10));
+                gfx.DrawString("Signal Type: " + tempStr, new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 30));
+                gfx.DrawString("Amplitude: " + tempAmplitude.ToString() + " V", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 50));
+                gfx.DrawString("Period: " + tempPeriod.ToString() + " s", new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(10, 70));
+
+                thisDate = DateTime.Now;
+                gfx.DrawString(pc.GetYear(thisDate).ToString("D4") + "/" + pc.GetMonth(thisDate).ToString("D2") + "/" + pc.GetDayOfMonth(thisDate).ToString("D2") + " " + pc.GetHour(thisDate).ToString("D2") + ":" + pc.GetMinute(thisDate).ToString("D2") + ":" + pc.GetSecond(thisDate).ToString("D2"),
+                                new Font("Tahoma", 10, FontStyle.Regular), new SolidBrush(Color.Black), new Point(270, 370));
+
+                if (overCurrent)
+                {
+                    gfx.DrawString("Over-Current", new Font("Tahoma", 10, FontStyle.Bold), new SolidBrush(Color.Red), new Point(10, 100));
+                }
+
+                totalSamples = (uint)(VI_Buffer.Count);
+
+                for (int i = 0; i < totalSamples; i++)
+                {
+                    UInt16 adcVoltage;
+                    UInt16 adcCurrent;
+
+                    VI = VI_Buffer.Dequeue();
+
+                    adcVoltage = (UInt16)(VI.X);
+                    adcCurrent = (UInt16)(VI.Y);
+
+                    double voltage = -(((double)(adcVoltage - offset) / 65535) * 3.3) * 4 * 1.325421391778252936 - 0.003021378303794;
+                    double current = -(((double)(adcCurrent - offset) / 65535) * 3.3) * 4 * 0.001338338929378022 + 6.051442370329619e-07;
+
+                    objWriter.WriteLine(voltage.ToString() + "," + current.ToString());
+                    //objWriter.WriteLine(adcVoltage.ToString() + "," + adcCurrent.ToString());
+
+                    x = -(int)(((double)(adcVoltage - offset) / 65535) * 420) + 199;
+                    y = (int)(((double)(adcCurrent - offset) / 65535) * 420) + 199;
+
+                    if (i != 0)
+                    {
+                        gfx.DrawLine(pen, new Point(tempx, tempy), new Point(x, y));
+                    }
+
+                    tempx = x;
+                    tempy = y;
+                }
+
+                pictureBox1.Image = bmpScreen;
+
+                int name2 = 0;
+
+                while (File.Exists("OUTPUT\\PERIOD_" + periodCount.ToString() + "_" + name2.ToString() + ".gif"))
+                {
+                    name2++;
+                }
+
+                bmpScreen.Save("OUTPUT\\PERIOD_" + periodCount.ToString() + "_" + name2.ToString() + ".gif", System.Drawing.Imaging.ImageFormat.Gif);
+
+                objWriter.Close();
+            }
         }
 
-        double ConvertADCtoVoltage(UInt16 adcV)
-        {
-            //return -(((double)(adcV - adcVoltageOffset) / 4096) * 2 * VREF) * voltageCorrectionFactor;
-            return -(((double)(adcV - adcVoltageOffset) / 4096) * 2 * VREF) * 4 * voltageCorrectionFactor;
-        }
-        double ConvertADCtoCurrent(UInt16 adcI)
-        {
-            //return ((((double)(adcI - adcCurrentOffset) / 4096) * 2 * VREF) * currentCorrectionFactor) / 1500;
-            return ((((double)(adcI - adcCurrentOffset) / 4096) * 10 * VREF) * currentCorrectionFactor) / 1500;
-        }
 
         private void ScopeInit()
         {
@@ -632,47 +504,14 @@ namespace Oscilloscope
         {
             if (mySerialPort.IsOpen)
             {
-                try
+                try 
                 {
-                    mySerialPort.Close();
+                    mySerialPort.Close(); 
                 }
-                catch
-                {
-                    MessageBox.Show("Port can't be closed.");
+                catch 
+                { 
+                    MessageBox.Show("Port can't be closed."); 
                 }
-            }
-        }
-
-        private void rdoSingle_CheckedChanged(object sender, EventArgs e)
-        {
-            if (rdoSingle.Checked)
-            {
-                IsHighFreq = false;
-                grpOnePeriod.Enabled = true;
-                grpPeriodic.Enabled = false;
-            }
-
-            else if (rdoPeriodic.Checked)
-            {
-                IsHighFreq = true;
-                grpOnePeriod.Enabled = false;
-                grpPeriodic.Enabled = true;
-            }
-        }
-
-        private void rdoPeriodic_CheckedChanged(object sender, EventArgs e)
-        {
-            if (rdoSingle.Checked)
-            {
-                IsHighFreq = false;
-                grpOnePeriod.Enabled = true;
-                grpPeriodic.Enabled = false;
-            }
-            else if (rdoPeriodic.Checked)
-            {
-                IsHighFreq = true;
-                grpOnePeriod.Enabled = false;
-                grpPeriodic.Enabled = true;
             }
         }
 
@@ -769,18 +608,21 @@ namespace Oscilloscope
             if (chkInvert.Checked) desiredSign = -1; else desiredSign = 1;
         }
 
+        private void serialClose(object sender, EventArgs e)
+        {
+            mySerialPort.Close();
+        }
+
         private void btnConnect_Click(object sender, EventArgs e)
         {
             if (mySerialPort.IsOpen)
             {
                 try
                 {
-                    buttonStart = true;
-                    StartStop();
-
                     mySerialPort.Write("P"); // Stop singnal genarating
 
-                    mySerialPort.Close();
+                    this.BeginInvoke(new EventHandler(serialClose));
+                    //mySerialPort.Close();
 
                     lblPortStatus.BackColor = Color.Red;
                     lblPortStatus.Text = mySerialPort.PortName.ToString() + " Disconnected";
@@ -825,9 +667,6 @@ namespace Oscilloscope
         {
             processThread = new Thread(processData);
             processThread.IsBackground = true; // terminate the thread when form is closed
-            qBuffer.Clear();
-            VI_Buffer.Clear();
-            mySerialPort.DiscardInBuffer();
             processThread.Start();
             threadStarted = true;
         }
@@ -850,8 +689,6 @@ namespace Oscilloscope
             cmbPortName.Enabled = true;
             btnScanPorts.Enabled = true;
 
-            periodCount = 0;
-            testCount = 0;
         }
 
         void connectedMode()
@@ -864,50 +701,39 @@ namespace Oscilloscope
             btnScanPorts.Enabled = false;
         }
 
-        private void Form1_Load(object sender, EventArgs e)
+        private void rdoSingle_CheckedChanged(object sender, EventArgs e)
         {
-            numPeriod.Value = (decimal)desiredPeriod;
-            lblPeriod.Text = "Period: " + desiredPeriod.ToString() + " s";
-
-            numFreq.Value = desiredFrequency;
-            lblFreq.Text = "Frequency: " + desiredFrequency.ToString() + " Hz";
-
-            desiredType = 0;
-            rdoSin.Checked = true;
-
-            numAmp.Maximum = (decimal)maxAmplitude;
-
-            numAmp.Value = (decimal)desiredAmplitude;
-            lblAmp.Text = "Amplitude: " + desiredAmplitude.ToString() + " V";
-
-            if (desiredSign == -1) chkInvert.Checked = true; else chkInvert.Checked = false;
-
-            desiredRate = 1000;
-
-            if (IsHighFreq)
+            if (rdoSingle.Checked)
             {
-                rdoSingle.Checked = false;
-                rdoPeriodic.Checked = true;
-
-                grpOnePeriod.Enabled = false;
-                grpPeriodic.Enabled = true;
-            }
-            else
-            {
-                rdoSingle.Checked = true;
-                rdoPeriodic.Checked = false;
-
+                IsHighFreq = false;
                 grpOnePeriod.Enabled = true;
                 grpPeriodic.Enabled = false;
             }
 
-            tempType = desiredType;
-            tempAmplitude = desiredAmplitude;
-            tempPeriod = desiredPeriod;
-            tempFrequency = desiredFrequency;
-            tempRate = desiredRate;
-            tempSign = desiredSign;
-            tempIsHighFreq = IsHighFreq;
+            else if (rdoPeriodic.Checked)
+            {
+                IsHighFreq = true;
+                grpOnePeriod.Enabled = false;
+                grpPeriodic.Enabled = true;
+            }
         }
+
+        private void rdoPeriodic_CheckedChanged(object sender, EventArgs e)
+        {
+            if (rdoSingle.Checked)
+            {
+                IsHighFreq = false;
+                grpOnePeriod.Enabled = true;
+                grpPeriodic.Enabled = false;
+            }
+
+            else if (rdoPeriodic.Checked)
+            {
+                IsHighFreq = true;
+                grpOnePeriod.Enabled = false;
+                grpPeriodic.Enabled = true;
+            }
+        }
+
     }
 }
