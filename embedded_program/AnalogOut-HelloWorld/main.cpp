@@ -1,15 +1,158 @@
 #include "mbed.h"
 
 Serial serial(p13, p14);
-Serial pc(USBTX, USBRX);
 
-// The sinewave is created on this pin
+// The Output analog signal is created on this pin
 AnalogOut aout(p18);
 
 AnalogIn   ain0(A2);
 AnalogIn   ain1(A4);
-uint16_t map;
+
 int baudRate = 921600;
+
+char rx_byte = 0;
+char rx_buffer[32];
+unsigned char rx_count = 0;
+bool cmdProcessing = false;
+bool cmdReceived = false;
+bool signalGenerating = false;
+
+char globalType = 0;
+float globalAmplitude = 1.0f;  // 0 ~ 1.0
+float globalPeriod = 1.0f;
+uint32_t globalFrequency = 1000;
+uint16_t golbalRate = 1000;
+signed char globalSign = 1;
+bool IsHighFreq = false;
+
+
+void rx_interrupt()
+{
+	LPC_UART0->IER = 0;         // Temporary Disable RX Interrupt (IMPORTANT)
+	
+  rx_byte = LPC_UART1->RBR;   // Read Receiver Buffer Register
+	
+	if (!cmdProcessing)
+	{
+		if (rx_byte == 'Q')
+		{
+			cmdProcessing = true;
+		}
+		
+		if (rx_byte == 'G')
+			signalGenerating = true;
+		
+		if (rx_byte == 'P')
+			signalGenerating = false;
+	}
+	else
+	{
+		rx_buffer[rx_count] = rx_byte;
+		rx_count++;
+		
+		if (rx_count == 32) // recevied command bytes count except 'Q'
+		{
+			cmdReceived = true;
+			cmdProcessing = false;
+			rx_count = 0;		
+		}
+	}
+	
+	LPC_UART0->IER = 1;			// Re-enable RX Interrupt
+}
+
+char getHexValue(char chr);
+
+const double pi = 3.141592653589793238462;
+const double offset = 65535/2;
+const uint16_t sampleRate = 1000;
+
+double triangle(double x);
+double halfTriangle(double x);
+double halfSine(double x);
+double signalOut(char type, double x);
+void onePeriod(char type, float amplitude, float period);
+void Periodic(void);
+
+uint32_t counter;
+
+int main()
+{
+	serial.baud(baudRate);
+	serial.attach(&rx_interrupt, Serial::RxIrq);
+    
+  while(1)
+	{
+		if (signalGenerating)
+		{			
+			if (IsHighFreq)
+			{
+				Periodic();	
+			}
+			else
+			{
+				onePeriod(globalType, globalAmplitude, globalPeriod);			
+				signalGenerating = false;
+			}
+		}
+		else
+		{
+			aout.write_u16((uint16_t)(offset));
+			
+			if (cmdReceived)
+			{
+				uint32_t tempLong;
+				char hexDigits[32];
+				bool validData = true;
+				unsigned char configByte;
+				
+				for (char i = 0; i < 32; i++)
+				{
+					hexDigits[i] = getHexValue(rx_buffer[i]);
+					
+					if (hexDigits[i] == 16)
+					{
+						validData = false;
+						break;
+					}
+				}
+				
+				if (validData)
+				{
+					globalType = (hexDigits[0] << 4) | hexDigits[1];
+					
+					tempLong = ((uint32_t)((hexDigits[2] << 4) | hexDigits[3]) << 24) | ((uint32_t)((hexDigits[4] << 4) | hexDigits[5]) << 16) | ((uint32_t)((hexDigits[6] << 4) | hexDigits[7]) << 8) | (uint32_t)((hexDigits[8] << 4) | hexDigits[9]);
+					globalAmplitude = *((float*)(&tempLong));
+					
+					tempLong = ((uint32_t)((hexDigits[10] << 4) | hexDigits[11]) << 24) | ((uint32_t)((hexDigits[12] << 4) | hexDigits[13]) << 16) | ((uint32_t)((hexDigits[14] << 4) | hexDigits[15]) << 8) | (uint32_t)((hexDigits[16] << 4) | hexDigits[17]);
+					globalPeriod = *((float*)(&tempLong));
+					
+					globalFrequency = ((uint32_t)((hexDigits[18] << 4) | hexDigits[19]) << 24) | ((uint32_t)((hexDigits[20] << 4) | hexDigits[21]) << 16) | ((uint32_t)((hexDigits[22] << 4) | hexDigits[23]) << 8) | (uint32_t)((hexDigits[24] << 4) | hexDigits[25]);
+					
+					golbalRate = ((uint16_t)((hexDigits[26] << 4) | hexDigits[27]) << 8) | (uint16_t)((hexDigits[28] << 4) | hexDigits[29]);
+					
+					configByte = (hexDigits[30] << 4) | hexDigits[31];
+					
+					globalSign = (configByte & 0x80) >> 7;
+					
+					if (globalSign == 0)
+						globalSign = -1;
+					
+					configByte = (configByte & 0x40) >> 6; // IsHighFreq
+					
+					if (configByte == 1)
+						IsHighFreq = true;
+					else
+						IsHighFreq = false;
+				}
+				
+				counter = 0;
+				
+				cmdReceived = false;
+			}
+		}
+  }
+}
 
 char getHexValue(char chr)
 {
@@ -66,73 +209,15 @@ char getHexValue(char chr)
 			n = 0;
 			break;
 	}
-
 	return n;
 }
 
-char rx_byte = 0;
-char rx_buffer[16];
-unsigned char rx_count = 0;
-bool cmdProcessing = false;
-bool cmdReceived = false;
-bool signalGenerating = false;
-bool resistance = false;
-bool firstTime = true;
-
-char globalType = 0;  // 0 : sin | 1 : ramp
-float globalAmplitude = 1.0f;  // 1.0f : 2.5v
-uint16_t golbalRate = 100;
-double globalPeriod = 1.0f;
-signed char globalSign = 1;
-
-void rx_interrupt()
-{
-	LPC_UART0->IER = 0;         // Temporary Disable RX Interrupt
-	
-    rx_byte = LPC_UART1->RBR;   // Read Receiver Buffer Register
-	
-	if (!cmdProcessing)
-	{
-		if (rx_byte == 'Q')
-		{
-			cmdProcessing = true;
-		}
-		
-		if (rx_byte == 'G')
-		{signalGenerating = true;resistance = false;firstTime = true;}
-		
-		if (rx_byte == 'P')
-		{signalGenerating = false;resistance = false;}
-		
-		if (rx_byte == 'R')
-			resistance = true;
-	}
-	else
-	{
-		rx_buffer[rx_count] = rx_byte;
-		rx_count++;
-		
-		if (rx_count == 12)
-		{
-			cmdReceived = true;
-			cmdProcessing = false;
-			rx_count = 0;		
-		}
-	}
-	
-	LPC_UART0->IER = 1;			// Re-enable RX Interrupt
-}
-
-const double pi = 3.141592653589793238462;
-const double _pi_2 = pi / 2;
-const double _3_pi_2 = 3 * _pi_2;
-const double _2_pi = pi * 2;
-
-const double offset = 65535/2;
-const uint16_t sampleRate = 100;
-
 double triangle(double x)
-{	
+{
+	double _pi_2 = pi / 2;
+	double _3_pi_2 = 3 * _pi_2;
+	double _2_pi = pi * 2;
+	
 	x -= pi;
 	
 	if (x >= 0 && x < _pi_2)
@@ -192,19 +277,19 @@ double signalOut(char type, double x)
 	}
 }
 
-void onePeriod(char type, signed char sign, float amplitude, double period)
+void onePeriod(char type, float amplitude, float period)
 {
-    double rads = 0.0;
+  double rads = 0.0;
 	uint16_t sample = 0;
 	
-	if (period > 100.0) period = 100.0;
-	else if (period < 1.0) period = 1.0;
+	if (period > 100.0f) period = 100.0f;
+	else if (period < 0.1f) period = 0.1f;
 	
 	if (amplitude > 1.0f) amplitude = 1.0f;
 	else if (amplitude < 0.0f) amplitude = 0.0f;
 	
-	// SampleRate = 100
-	int delay = 9910; // (1000000 / SampleRate) - 78:serial + 2x5:adc + 2:dac
+	// SampleRate = 1000
+	int delay = 880; // (100000 / SampleRate) - 78:serial + 2x19:adc + 4:dac
 	
 	uint32_t sampleCount = (uint32_t)(sampleRate * period);
 	
@@ -213,24 +298,24 @@ void onePeriod(char type, signed char sign, float amplitude, double period)
 	
 	for (uint32_t i = 0; i < sampleCount; i++)
 	{
-		if (signalGenerating && !resistance)
+		if (signalGenerating)
 		{
 			rads = (pi * i) / ((float)sampleCount / 2);
-				
-			sample = (uint16_t)(amplitude * (offset * (sign * signalOut(type, rads + pi))) + offset);
-			aout.write_u16(sample);
+	
+			sample = (uint16_t)(amplitude * (offset * (globalSign*signalOut(type, rads + pi))) + offset);
+			aout.write_u16(sample); //4us
 				
 			wait_us(delay);
 				
-			adc0 = ain0.read_u16();
-			adc1 = ain1.read_u16();
+			adc0 = ain0.read_u16(); //19us
+			adc1 = ain1.read_u16(); //19us
 			
 			if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
 			{
 				amplitude = 0;
 				globalAmplitude = 0;
 				signalGenerating = false;
-				serial.putc('W');
+				serial.putc('W'); // error condition
 			}
 			else
 			{	
@@ -242,136 +327,108 @@ void onePeriod(char type, signed char sign, float amplitude, double period)
 			break;
 		}
 	}
+	
+	if (signalGenerating)
+		serial.putc('P');  // end of period
 }
 
-int main()
+void Periodic(void)
 {
-	serial.baud(baudRate);
-	serial.attach(&rx_interrupt, Serial::RxIrq);
-    
-    while(1)
-	{	
-		uint16_t adc0;
-		uint16_t adc1;	
+	uint16_t adc0;
+	uint16_t adc1;
+	uint16_t sample = 0;
+	
+	if (globalFrequency == 0)
+	{
+			sample = (uint16_t)(globalAmplitude * (offset * (globalSign*(-1))) + offset); // DC
+			aout.write_u16(sample);
 		
-		uint32_t adc0_sum;
-		uint32_t adc1_sum;
-		
-		if (signalGenerating  && !resistance)
-		{			
-			aout.write_u16((uint16_t)(globalAmplitude * (offset * (-1)) + offset));
-			
-			if (firstTime)
-			{
-				wait_ms(10);
-				firstTime = false;
-			}
-			
-			adc0_sum = 0;
-			adc1_sum = 0;
-			
-			for(char i = 0; i < 100; i++)
-			{
-				wait_us(99);
+			wait_us(8);
 				
-				adc0 = ain0.read_u16();
-				adc1 = ain1.read_u16();
-				
-				adc0_sum += adc0;
-				adc1_sum += adc1;
-			}
-			
-			adc0 = (uint16_t)((double)adc0_sum / 100.0);
-			adc1 = (uint16_t)((double)adc1_sum / 100.0);
+			adc0 = ain0.read_u16();
+			adc1 = ain1.read_u16();
 			
 			if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
 			{
 				globalAmplitude = 0;
 				signalGenerating = false;
-				serial.putc('W');
+				serial.putc('W'); // error condition
 			}
-			else
-			{	
-				serial.printf("S%04X%04X", adc0, adc1); // 9 chraracters take 78.125 microseconds with 921600bps
-			}		
-		}
-		else
-		{
-			if (resistance)
-			{
-				aout.write_u16((uint16_t)(offset));
-				
-				wait_ms(998);
-				
-				aout.write_u16((uint16_t)(globalAmplitude * (offset * (-1)) + offset));
-					
-				adc0_sum = 0;
-				adc1_sum = 0;
-				
-				wait_ms(1);
-				
-				for(char i = 0; i < 100; i++)
-				{	
-					wait_us(10);
-					
-					adc0 = ain0.read_u16();
-					adc1 = ain1.read_u16();
-					
-					adc0_sum += adc0;
-					adc1_sum += adc1;
-				}
-				
-				adc0 = (uint16_t)((double)adc0_sum / 100.0);
-				adc1 = (uint16_t)((double)adc1_sum / 100.0);
-				
-				if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
-				{
-					globalAmplitude = 0;
-					signalGenerating = false;
-					serial.putc('W');
-				}
-				else
-				{	
-					serial.printf("S%04X%04X", adc0, adc1); // 9 chraracters take 78.125 microseconds with 921600bps
-				}
-			}
-			else
-			{
-				aout.write_u16((uint16_t)(offset));
 			
-			if (cmdReceived)
-			{
-				char d1 = getHexValue(rx_buffer[0]);				
-				char d2 = getHexValue(rx_buffer[1]);
-				
-				char d3[2];
-				
-				d3[1] = getHexValue(rx_buffer[2]);
-				d3[0] = getHexValue(rx_buffer[3]);
-				
-				char d4[8];
-				
-				d4[7] = getHexValue(rx_buffer[4]);
-				d4[6] = getHexValue(rx_buffer[5]);
-				d4[5] = getHexValue(rx_buffer[6]);
-				d4[4] = getHexValue(rx_buffer[7]);
-				d4[3] = getHexValue(rx_buffer[8]);
-				d4[2] = getHexValue(rx_buffer[9]);
-				d4[1] = getHexValue(rx_buffer[10]);
-				d4[0] = getHexValue(rx_buffer[11]);
-
-				if (!( d1 == 16 || d2 == 16 || d3[1] == 16 || d3[0] == 16 || d4[7] == 16 || d4[6] == 16 || d4[5] == 16 || d4[4] == 16 || d4[3] == 16 || d4[2] == 16 || d4[1] == 16 || d4[0] == 16 ))
-				{
-					globalType = d1;
-					if (d2 == 15) globalSign = 1;
-					else if (d2 == 0) globalSign = -1;
-					globalAmplitude = (float)(d3[1] * 16 + d3[0]) / 255.0f;
-					globalPeriod = (double)(d4[7] * 268435456 + d4[6] * 16777216 + d4[5] * 1048576 + d4[4] * 65536 + d4[3] * 4096 + d4[2] * 256 + d4[1] * 16 + d4[0]) / 42949672.0;			
-				}	
-				
-				cmdReceived = false;
+			counter++;
+			
+			if (counter == 5000)
+			{	
+				counter = 0;
+				if (signalGenerating)
+				{	
+						serial.printf("S%04X%04X", adc0, adc1); // 9 chraracters take 78.125 microseconds with 921600bps
+				}
+			}	
+	}
+	else
+	{
+		uint16_t period_s_2;  // one half of period in seconds
+		uint16_t period_ms_2; // one half of period in milliseconds
+		uint32_t period_us_2; // one half of period in microseconds
+		
+		uint32_t freq = globalFrequency;
+		
+		int16_t first_us = 0;
+		
+		if ( freq > 5000) freq = 5000;
+		
+		period_us_2 = (uint32_t)(500000.0f / (float)freq);
+		
+		period_ms_2 = (uint16_t)(period_us_2 / 1000);
+		
+		period_us_2 = period_us_2 % 1000;
+		
+		period_s_2 = period_ms_2 / 1000;
+		
+		period_ms_2 = period_ms_2 % 1000;
+		
+		sample = (uint16_t)(globalAmplitude * (offset * (globalSign*(-1))) + offset); // DC
+		aout.write_u16(sample); //4us
+		
+		adc0 = ain0.read_u16(); //19us
+		adc1 = ain1.read_u16(); //19us
+		
+		if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
+		{
+			globalAmplitude = 0;
+			signalGenerating = false;
+			serial.putc('W'); // error condition
+		}
+		
+		wait(period_s_2);
+		wait_ms(period_ms_2);
+		
+		first_us = period_us_2 - 84;
+		
+		if (first_us > 0) wait_us(first_us);
+			
+		adc0 = ain0.read_u16(); //19us
+		adc1 = ain1.read_u16(); //19us
+		
+		aout.write_u16(offset); //4us
+		
+		counter++;
+		
+		if (freq > 10) freq = freq / 10;
+		
+		if (counter == freq)
+		{	
+			counter = 0;
+			if (signalGenerating)
+			{	
+					serial.printf("S%04X%04X", adc0, adc1); // 9 chraracters take 78.125 microseconds with 921600bps
 			}
-		}
-		}
-    }
+		}	
+		
+		wait(period_s_2);
+		wait_ms(period_ms_2);
+		wait_us(period_us_2);
+	}
+
 }
