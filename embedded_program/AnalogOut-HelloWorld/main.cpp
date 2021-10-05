@@ -8,6 +8,8 @@ AnalogOut aout(p18);
 AnalogIn   ain0(A2);
 AnalogIn   ain1(A4);
 
+float vref = 2.495f;
+
 int baudRate = 921600;
 
 char rx_byte = 0;
@@ -63,8 +65,9 @@ void rx_interrupt()
 
 char getHexValue(char chr);
 
-const double pi = 3.141592653589793238462;
-const double offset = 65535/2;
+const double pi = 3.141593;
+const double offset = 512;
+const double half_scale = 511;
 const uint16_t sampleRate = 1000;
 
 double triangle(double x);
@@ -76,13 +79,36 @@ void Periodic(void);
 
 uint32_t counter;
 
+void writeVoltage(uint16_t dac)
+{
+	aout.write_u16(dac << 6);
+}
+
+uint16_t readVoltage(void)
+{
+	return ain0.read_u16() >> 4;
+}
+
+uint16_t readCurrent(void)
+{
+	return ain1.read_u16() >> 4;
+}
+
+uint16_t adc0;
+uint16_t adc1;
+
 int main()
 {
 	serial.baud(baudRate);
 	serial.attach(&rx_interrupt, Serial::RxIrq);
-    
+	
+//				char str[50];
+//				sprintf(str,"%d,%d\r\n",adc0,adc1);
+//				serial.puts(str);
+	
   while(1)
 	{
+		
 		if (signalGenerating)
 		{			
 			if (IsHighFreq)
@@ -97,7 +123,7 @@ int main()
 		}
 		else
 		{
-			aout.write_u16((uint16_t)(offset));
+			writeVoltage((uint16_t)(offset));
 			
 			if (cmdReceived)
 			{
@@ -263,15 +289,15 @@ double signalOut(char type, double x)
 	switch (globalType)
 	{
 		case 0:
-			return sin(x);
+			return -sin(x);
 		case 1:
-			return triangle(x);
+			return -triangle(x);
 		case 2:
-			return halfSine(x);
+			return -halfSine(x);
 		case 3:
-			return halfTriangle(x);
+			return -halfTriangle(x);
 		case 4:
-			return -1.0;
+			return 1.0;
 		default:
 			return 0;
 	}
@@ -293,24 +319,22 @@ void onePeriod(char type, float amplitude, float period)
 	
 	uint32_t sampleCount = (uint32_t)(sampleRate * period);
 	
-	uint16_t adc0;
-	uint16_t adc1;
-	
 	for (uint32_t i = 0; i < sampleCount; i++)
 	{
 		if (signalGenerating)
 		{
 			rads = (pi * i) / ((float)sampleCount / 2);
 	
-			sample = (uint16_t)(amplitude * (offset * (globalSign*signalOut(type, rads + pi))) + offset);
-			aout.write_u16(sample); //4us
-				
+			sample = (uint16_t)(amplitude * (half_scale * (globalSign*signalOut(type, rads + pi))) + offset);
+
+			writeVoltage(sample);  //4us
+	
 			wait_us(delay);
 				
-			adc0 = ain0.read_u16(); //19us
-			adc1 = ain1.read_u16(); //19us
+			adc0 = readVoltage(); //19us
+			adc1 = readCurrent(); //19us
 			
-			if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
+			if (adc0 == 4095 || adc0 == 0  || adc1 == 4095 || adc1 == 0)  // Over-Current or Over-Voltage
 			{
 				amplitude = 0;
 				globalAmplitude = 0;
@@ -334,21 +358,19 @@ void onePeriod(char type, float amplitude, float period)
 
 void Periodic(void)
 {
-	uint16_t adc0;
-	uint16_t adc1;
 	uint16_t sample = 0;
 	
 	if (globalFrequency == 0)
 	{
-			sample = (uint16_t)(globalAmplitude * (offset * (globalSign*(-1))) + offset); // DC
-			aout.write_u16(sample);
+			sample = (uint16_t)(globalAmplitude * (half_scale * (globalSign*(1))) + offset); // DC
+			writeVoltage(sample);
 		
 			wait_us(8);
 				
-			adc0 = ain0.read_u16();
-			adc1 = ain1.read_u16();
+			adc0 = readVoltage(); //19us
+			adc1 = readCurrent(); //19us
 			
-			if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
+			if (adc0 == 4095 || adc0 == 0  || adc1 == 4095 || adc1 == 0)  // Over-Current or Over-Voltage
 			{
 				globalAmplitude = 0;
 				signalGenerating = false;
@@ -388,13 +410,13 @@ void Periodic(void)
 		
 		period_ms_2 = period_ms_2 % 1000;
 		
-		sample = (uint16_t)(globalAmplitude * (offset * (globalSign*(-1))) + offset); // DC
-		aout.write_u16(sample); //4us
+		sample = (uint16_t)(globalAmplitude * (half_scale * (globalSign*(1))) + offset); // DC
+		writeVoltage(sample); //4us
 		
-		adc0 = ain0.read_u16(); //19us
-		adc1 = ain1.read_u16(); //19us
+		adc0 = readVoltage(); //19us
+		adc1 = readCurrent(); //19us
 		
-		if (adc0 > 65530 || adc0 < 5  || adc1 > 65530 || adc1 < 5)  // Over-Current or Over-Voltage
+		if (adc0 == 4095 || adc0 == 0  || adc1 == 4095 || adc1 == 0)  // Over-Current or Over-Voltage
 		{
 			globalAmplitude = 0;
 			signalGenerating = false;
@@ -408,10 +430,10 @@ void Periodic(void)
 		
 		if (first_us > 0) wait_us(first_us);
 			
-		adc0 = ain0.read_u16(); //19us
-		adc1 = ain1.read_u16(); //19us
+		adc0 = readVoltage(); //19us
+		adc1 = readCurrent(); //19us
 		
-		aout.write_u16(offset); //4us
+		writeVoltage(offset); //4us
 		
 		counter++;
 		
