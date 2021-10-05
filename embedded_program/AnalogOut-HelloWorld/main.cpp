@@ -105,8 +105,7 @@ void rx_interrupt()
 		{signalGenerating = false;resistance = false;}
 		
 		if (rx_byte == 'R')
-		{	resistance = true;
-		}
+			resistance = true;
 	}
 	else
 	{
@@ -300,14 +299,20 @@ int main()
 		{
 			if (resistance)
 			{
-				aout.write_u16((uint16_t)(globalAmplitude * (offset * (1)) + offset));
+				aout.write_u16((uint16_t)(offset));
 				
+				wait_ms(998);
+				
+				aout.write_u16((uint16_t)(globalAmplitude * (offset * (-1)) + offset));
+					
 				adc0_sum = 0;
 				adc1_sum = 0;
 				
+				wait_ms(1);
+				
 				for(char i = 0; i < 100; i++)
-				{
-					wait_us(99);
+				{	
+					wait_us(10);
 					
 					adc0 = ain0.read_u16();
 					adc1 = ain1.read_u16();
@@ -328,7 +333,7 @@ int main()
 				else
 				{	
 					serial.printf("S%04X%04X", adc0, adc1); // 9 chraracters take 78.125 microseconds with 921600bps
-				}		
+				}
 			}
 			else
 			{
